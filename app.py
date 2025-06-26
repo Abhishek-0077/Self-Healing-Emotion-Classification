@@ -32,74 +32,86 @@ tokenizer = AutoTokenizer.from_pretrained(model_path)
 
 class GraphState(TypedDict):
     input: str
+    intent: str
     prediction: Optional[str]
     confidence: Optional[float]
     clarified_input: Optional[str]
 
-# Inference Node
+
+
+
 def inference_node(state: GraphState) -> GraphState:
-    print("[Inference Node ]")
+    print("Inference")
     inputs = tokenizer(state["input"], return_tensors="pt", truncation=True, padding=True)
     with torch.no_grad():
         outputs = model(**inputs)
         probs = F.softmax(outputs.logits, dim=1)
         confidence, predicted_class = torch.max(probs, dim=1)
-        label = label_names[predicted_class.item()]
-        state = {
+        label = model.config.id2label[predicted_class.item()]
+        return {
             **state,
             "prediction": label,
             "confidence": confidence.item()
         }
-        print(f"\nLow confidence: {state['confidence']*100:.2f}%")
-        print(f"Model prediction: {state['prediction']}")
-        return state
 
-# Router Function — Must return STRING!
-def confidence_check_router(state: GraphState) -> str:
+def confidence_check_node(state: GraphState)->GraphState:
+    print("Confidence Check")
     if state["confidence"] < 0.65:
-        print("[Confidence Node Check ] : Low | Triggering Fallback.......")
-        return "fallback"
+        state['intent'] = "fallback"
     else:
-        print("[Confidence Node Check ] : Good")
-        return END
+        state['intent'] = "__end__"
+    return state
 
-# Fallback Node
+def confidence_check_router(state: GraphState)->str:
+    return state['intent']
+    
 def fallback_node(state: GraphState) -> GraphState:
-    print("[FallBack Node ]")
-    correct = input("Please clarify the correct emotion : from (sadness, joy, love, anger, fear, surprise) ").strip().lower()
+    print(f"\n Low confidence: {state['confidence']*100:.2f}%")
+    print(f"Model prediction: {state['prediction']}")
+    corrected = input("Please clarify the correct emotion (e.g., joy, anger...): ").strip().lower()
+    log_to_file(
+        f"Fallback Triggered | Input: '{state['input']}' | Predicted: {state['prediction']} "
+        f"({state['confidence']*100:.2f}%) → Corrected: {corrected}"
+    )
+
     return {
         **state,
-        "prediction": correct,
+        "prediction": corrected,
         "clarified_input": state["input"]
     }
+
 
 
 graph_builder = StateGraph(GraphState)
 
 graph_builder.add_node("inference", inference_node)
 graph_builder.add_node("fallback", fallback_node)
-
+graph_builder.add_node("conditionalnode", confidence_check_node)
 graph_builder.set_entry_point("inference")
 
+
 graph_builder.add_conditional_edges(
-    "inference",
+    "conditionalnode",
     confidence_check_router,
     {
         "fallback": "fallback",
-        END: END
+        "__end__": END
     }
 )
-
+graph_builder.add_edge("inference","conditionalnode")
 graph_builder.add_edge("fallback", END)
 
 graph = graph_builder.compile()
 
+
+
 if __name__ == "__main__":
+    print("Emotion Classifier (Self-Healing Mode Enabled)")
     while True:
         user_input = input("\nEnter text to classify (or 'exit'): ")
         if user_input.lower() == "exit":
             break
         final_state = graph.invoke({"input": user_input})
-        print(f"Final Label: {final_state['prediction']}")
+        print(f"\nFinal Label: {final_state['prediction']}")
         print(f"Confidence: {final_state['confidence']*100:.2f}%")
 
