@@ -4,6 +4,32 @@ from transformers import AutoTokenizer
 import torch.nn.functional as F
 import torch
 
+
+
+
+label_names = ["sadness", "joy", "love", "anger", "fear", "surprise"]
+
+
+model_path = "/content/drive/MyDrive/ATG_Assignment2/finetuned_emotion_model"
+
+
+peft_config = PeftConfig.from_pretrained(model_path)
+
+
+base_model = AutoModelForSequenceClassification.from_pretrained(
+    peft_config.base_model_name_or_path,
+    num_labels=len(label_names)  # Should be 6
+)
+
+
+model = PeftModel.from_pretrained(base_model, model_path)
+model.eval()
+
+tokenizer = AutoTokenizer.from_pretrained(model_path)
+
+
+
+
 class GraphState(TypedDict):
     input: str
     prediction: Optional[str]
